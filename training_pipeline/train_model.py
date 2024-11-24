@@ -33,7 +33,7 @@ model.compile(
 
 # 3. Compile and train
 def train_model(model):
-    history = model.fit(train_ds, validation_data=val_ds, epochs=50)
+    history = model.fit(train_ds, validation_data=val_ds, epochs=150)
 
     # Extract training and validation accuracy
     train_accuracy = history.history["accuracy"]
@@ -92,4 +92,4 @@ def quantize_and_export(model, output_path="model.h"):
         f.write(f"unsigned int model_len = {len(tflite_model)};")
 
 
-quantize_and_export(model, "../edge_device_deployment/model.h")
+quantize_and_export(model, "edge_device_deployment/model.h")

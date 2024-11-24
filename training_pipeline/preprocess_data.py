@@ -11,6 +11,7 @@ NFFT = 256  # FFT size, equal to frame length
 NUM_MEL_BINS = 40  # Assuming unchanged; the paper does not specify this
 NUM_MFCCS = 12  # Number of MFCC coefficients remains standard
 
+
 def preprocess_audio(file_path, label):
     """
     Preprocess an audio file to extract MFCC features.
@@ -27,8 +28,10 @@ def preprocess_audio(file_path, label):
     waveform = tf.cast(waveform, tf.float32)
 
     # Step 2: Pre-emphasis
-    pre_emphasis = 0.97
-    waveform = tf.concat([[waveform[0]], waveform[1:] - pre_emphasis * waveform[:-1]], axis=0)
+    pre_emphasis = 0.9375  #! has to be 0.9375
+    waveform = tf.concat(
+        [[waveform[0]], waveform[1:] - pre_emphasis * waveform[:-1]], axis=0
+    )
 
     # Step 3: Compute STFT and power spectrogram
     stft = tf.signal.stft(
@@ -36,7 +39,7 @@ def preprocess_audio(file_path, label):
         frame_length=int(FRAME_SIZE * SAMPLE_RATE),
         frame_step=int(FRAME_STRIDE * SAMPLE_RATE),
         fft_length=NFFT,
-        window_fn=tf.signal.hamming_window
+        window_fn=tf.signal.hamming_window,
     )
     power_spectrogram = tf.square(tf.abs(stft)) / NFFT
 
@@ -46,7 +49,7 @@ def preprocess_audio(file_path, label):
         num_spectrogram_bins=stft.shape[-1],
         sample_rate=SAMPLE_RATE,
         lower_edge_hertz=0.0,
-        upper_edge_hertz=SAMPLE_RATE / 2
+        upper_edge_hertz=SAMPLE_RATE / 2,
     )
     mel_spectrogram = tf.tensordot(power_spectrogram, mel_filterbank, axes=[-1, 0])
     mel_spectrogram.set_shape(power_spectrogram.shape[:-1] + [NUM_MEL_BINS])
@@ -60,7 +63,10 @@ def preprocess_audio(file_path, label):
 
     return mfccs, label
 
-def prepare_speech_commands_dataset(data_dir, batch_size=32, validation_split=0.2, seed=123):
+
+def prepare_speech_commands_dataset(
+    data_dir, batch_size=32, validation_split=0.2, seed=123
+):
     """
     Prepare the Speech Commands dataset for training and validation.
     Args:
@@ -110,35 +116,32 @@ def prepare_speech_commands_dataset(data_dir, batch_size=32, validation_split=0.
 
     # Apply preprocessing
     train_ds = train_ds.map(
-        lambda x, y: preprocess_audio(x, y),
-        num_parallel_calls=tf.data.AUTOTUNE
+        lambda x, y: preprocess_audio(x, y), num_parallel_calls=tf.data.AUTOTUNE
     )
 
     val_ds = val_ds.map(
-        lambda x, y: preprocess_audio(x, y),
-        num_parallel_calls=tf.data.AUTOTUNE
+        lambda x, y: preprocess_audio(x, y), num_parallel_calls=tf.data.AUTOTUNE
     )
 
     # Add channel dimension
-    train_ds = train_ds.map(
-        lambda x, y: (tf.expand_dims(x, -1), y)
-    )
+    train_ds = train_ds.map(lambda x, y: (tf.expand_dims(x, -1), y))
 
-    val_ds = val_ds.map(
-        lambda x, y: (tf.expand_dims(x, -1), y)
-    )
+    val_ds = val_ds.map(lambda x, y: (tf.expand_dims(x, -1), y))
 
     # Apply padded batching
     train_ds = train_ds.padded_batch(
         batch_size=batch_size,
-        padded_shapes=([None, NUM_MFCCS, 1], []),  # Pad MFCC sequences to [None, NUM_MFCCS] and labels as scalars
-        padding_values=(0.0, 0)  # Pad MFCCs with 0.0 and labels with 0
+        padded_shapes=(
+            [None, NUM_MFCCS, 1],
+            [],
+        ),  # Pad MFCC sequences to [None, NUM_MFCCS] and labels as scalars
+        padding_values=(0.0, 0),  # Pad MFCCs with 0.0 and labels with 0
     ).prefetch(tf.data.AUTOTUNE)
 
     val_ds = val_ds.padded_batch(
         batch_size=batch_size,
         padded_shapes=([None, NUM_MFCCS, 1], []),
-        padding_values=(0.0, 0)
+        padding_values=(0.0, 0),
     ).prefetch(tf.data.AUTOTUNE)
 
     return train_ds, val_ds, class_names
