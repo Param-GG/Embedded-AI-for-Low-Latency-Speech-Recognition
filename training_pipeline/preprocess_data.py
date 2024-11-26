@@ -26,7 +26,9 @@ def add_background_noise(audio):
     # Get all background noise files
     noise_files = list(Path(BACKGROUND_NOISE_DIR).glob("*.wav"))
     if not noise_files:
-        return audio  # If no background noise files are available, return original audio
+        return (
+            audio  # If no background noise files are available, return original audio
+        )
 
     # Randomly select a background noise file
     selected_noise_file = random.choice(noise_files)
@@ -36,10 +38,14 @@ def add_background_noise(audio):
     noise_waveform, _ = tf.audio.decode_wav(noise_audio_binary, desired_channels=1)
     noise_waveform = tf.squeeze(noise_waveform, axis=-1)  # Remove channel dimension
     noise_waveform = tf.cast(noise_waveform, tf.float32)
-    
+
     # Ensure the background noise is at least as long as the target audio
-    noise_waveform = tf.tile(noise_waveform, [tf.math.ceil(tf.shape(audio)[0] / tf.shape(noise_waveform)[0])])
-    noise_waveform = noise_waveform[: tf.shape(audio)[0]]  # Trim to match target audio length
+    noise_waveform = tf.tile(
+        noise_waveform, [tf.math.ceil(tf.shape(audio)[0] / tf.shape(noise_waveform)[0])]
+    )
+    noise_waveform = noise_waveform[
+        : tf.shape(audio)[0]
+    ]  # Trim to match target audio length
 
     # Scale background noise to 10% of the target audio's RMS volume
     audio_rms = tf.math.sqrt(tf.reduce_mean(tf.square(audio)))
@@ -50,6 +56,63 @@ def add_background_noise(audio):
     augmented_audio = audio + noise_waveform
 
     return augmented_audio
+
+
+# * experimenting
+import matplotlib.pyplot as plt
+
+
+def visualize_waveform(waveform):
+    """
+    Visualize the waveform after ensuring it's in numpy format.
+    """
+    if tf.executing_eagerly():
+        # Convert tensor to numpy if in eager execution mode
+        waveform = waveform.numpy() if isinstance(waveform, tf.Tensor) else waveform
+    else:
+        # For graph execution, use TensorFlow operations
+        waveform = tf.make_ndarray(tf.make_tensor_proto(waveform))
+
+    # Proceed with visualization using matplotlib or similar
+    import matplotlib.pyplot as plt
+
+    plt.figure(figsize=(10, 4))
+    plt.plot(waveform)
+    plt.title("Waveform Visualization")
+    plt.show()
+
+
+def visualize_spectrogram(spectrogram):
+    plt.figure(figsize=(10, 4))
+    plt.imshow(spectrogram.T, aspect="auto", origin="lower", cmap="viridis")
+    plt.colorbar(label="Power")
+    plt.title("Power Spectrogram")
+    plt.xlabel("Time Frames")
+    plt.ylabel("Frequency Bins")
+    plt.show()
+
+
+def visualize_log_mel_spectrogram(log_mel_spectrogram):
+    plt.figure(figsize=(10, 4))
+    plt.imshow(log_mel_spectrogram.T, aspect="auto", origin="lower", cmap="inferno")
+    plt.colorbar(label="Log Amplitude")
+    plt.title("Log-Mel Spectrogram")
+    plt.xlabel("Time Frames")
+    plt.ylabel("Mel Bins")
+    plt.show()
+
+
+def visualize_mfccs(mfccs):
+    plt.figure(figsize=(10, 4))
+    plt.imshow(mfccs.T, aspect="auto", origin="lower", cmap="coolwarm")
+    plt.colorbar(label="MFCC Coefficients")
+    plt.title("MFCCs")
+    plt.xlabel("Time Frames")
+    plt.ylabel("MFCC Coefficients")
+    plt.show()
+
+
+# * experimenting
 
 
 def preprocess_audio(file_path, label):
@@ -71,10 +134,13 @@ def preprocess_audio(file_path, label):
     waveform = add_background_noise(waveform)
 
     # Step 3: Pre-emphasis
-    pre_emphasis = 0.9375  #! has to be 0.9375
+    pre_emphasis = 0.9375
     waveform = tf.concat(
         [[waveform[0]], waveform[1:] - pre_emphasis * waveform[:-1]], axis=0
     )
+
+    # * experimenting
+    # visualize_waveform(waveform)
 
     # Step 4: Compute STFT and power spectrogram
     stft = tf.signal.stft(
@@ -85,6 +151,10 @@ def preprocess_audio(file_path, label):
         window_fn=tf.signal.hamming_window,
     )
     power_spectrogram = tf.square(tf.abs(stft)) / NFFT
+
+    # * experimenting
+    # visualize_spectrogram(power_spectrogram.numpy())
+    # *
 
     # Step 5: Apply Mel filterbanks
     mel_filterbank = tf.signal.linear_to_mel_weight_matrix(
@@ -100,10 +170,27 @@ def preprocess_audio(file_path, label):
     # Step 6: Convert to log scale
     log_mel_spectrogram = tf.math.log(mel_spectrogram + 1e-6)
 
+    # * experimenting
+    # Add to your pipeline:
+    # visualize_log_mel_spectrogram(log_mel_spectrogram.numpy())
+    # * experimenting
+
     # Step 7: Compute MFCCs
     mfccs = tf.signal.mfccs_from_log_mel_spectrograms(log_mel_spectrogram)
     mfccs = mfccs[..., :NUM_MFCCS]  # Keep only the first NUM_MFCCS coefficients
 
+    # * experimenting
+    # Add to your pipeline:
+
+    # visualize_mfccs(mfccs.numpy())
+    # * experimenting
+
+    return mfccs, label
+
+
+def debug_preprocessing(file_path, label):
+    mfccs, label = preprocess_audio(file_path, label)
+    print(f"MFCC shape: {mfccs.shape}, Label: {label}")
     return mfccs, label
 
 
@@ -157,6 +244,21 @@ def prepare_speech_commands_dataset(
     train_ds = tf.data.Dataset.from_tensor_slices((train_file_paths, train_labels))
     val_ds = tf.data.Dataset.from_tensor_slices((val_file_paths, val_labels))
 
+    # * trying experimenting here
+
+    # # Add a debugging step to verify statistics
+    # train_ds = train_ds.map(
+    #     lambda x, y: verify_statistics(x, y), num_parallel_calls=tf.data.AUTOTUNE
+    # )
+
+    # train_ds = train_ds.map(lambda x, y: debug_preprocessing(x, y))
+
+    # for mfccs, label in train_ds.take(1):
+    #     print(f"MFCC Shape: {mfccs.shape}, Label: {label.numpy()}")
+    #     visualize_mfccs(mfccs[0].numpy())
+
+    # * trying experimenting here
+
     # Apply preprocessing
     train_ds = train_ds.map(
         lambda x, y: preprocess_audio(x, y), num_parallel_calls=tf.data.AUTOTUNE
@@ -188,3 +290,11 @@ def prepare_speech_commands_dataset(
     ).prefetch(tf.data.AUTOTUNE)
 
     return train_ds, val_ds, class_names
+
+
+# def verify_statistics(file_path, label):
+#     mfccs, label = preprocess_audio(file_path, label)
+#     print(
+#         f"MFCC Stats - Min: {tf.reduce_min(mfccs).numpy()}, Max: {tf.reduce_max(mfccs).numpy()}"
+#     )
+#     return mfccs, label
