@@ -1,47 +1,65 @@
 #include "Arduino.h"
-#include "tensorflow/lite/micro/all_ops_resolver.h"
-#include "tensorflow/lite/micro/kernels/micro_ops.h"
-#include "tensorflow/lite/micro/micro_interpreter.h"
-#include "tensorflow/lite/schema/schema_generated.h"
+#include <TensorFlowLite.h>
+#include "tensorflow/lite/experimental/micro/kernels/all_ops_resolver.h" 
+#include "tensorflow/lite/experimental/micro/micro_error_reporter.h" 
+#include "tensorflow/lite/experimental/micro/micro_interpreter.h" 
+#include "tensorflow/lite/schema/schema_generated.h" 
 #include "tensorflow/lite/version.h"
+#include <PDM.h>  // For capturing audio using the onboard microphone
+#include "compute_mfcc.h"
 #include "model.h"  // Include the quantized model
 
 // Global Variables for TensorFlow Lite
 constexpr int kTensorArenaSize = 10 * 1024;  // Adjust based on model size
-uint8_t tensor_arena[kTensorArenaSize];
+uint8_t tensor_arena[kTensorArenaSize] = {0};
 
-tflite::MicroInterpreter* interpreter;
-tflite::ErrorReporter* error_reporter;
+tflite::MicroInterpreter* interpreter = nullptr;
+tflite::ErrorReporter* error_reporter = nullptr;
+// TfLiteTensor* input = nullptr; 
+// TfLiteTensor* output = nullptr; 
+// float* input_buffer = nullptr;
 
-// Function to Capture Audio (Simulated in this example)
-void captureAudio(int16_t* audio_buffer, int buffer_size) {
-    // Implement real-time audio capture using the microphone
-    // For simulation, populate audio_buffer with test data
-}
+// Audio capture globals
+const int kSampleRate = 16000;  // Sampling rate in Hz
+const int kAudioCaptureDuration = 1;  // Capture 1 second of audio
+const int kAudioBufferSize = kSampleRate * kAudioCaptureDuration;  // 16,000 samples for 1 second
+int16_t audio_buffer[kAudioBufferSize];
+volatile int audio_buffer_index = 0;
+float mfcc_features[99][NUM_MFCC_FEATURES];
 
-// Function to Compute MFCCs
-void computeMFCC(const int16_t* audio_buffer, float* mfcc_features) {
-    // Implement MFCC extraction here or use preprocessed test data
+// Function to Capture Audio using onboard PDM Mic
+void captureAudio() {
+  while (PDM.available()) {
+    int16_t sample;
+    PDM.read(&sample, sizeof(int16_t));
+    if (audio_buffer_index < kAudioBufferSize) {
+      audio_buffer[audio_buffer_index++] = sample;
+    }
+  }
 }
 
 void setup() {
     Serial.begin(9600);
-
+    while (!Serial);
+    Serial.println("Started");
+    
     // TensorFlow Lite Initialization
     static tflite::MicroErrorReporter micro_error_reporter;
     error_reporter = &micro_error_reporter;
 
     const tflite::Model* model = tflite::GetModel(model);
     if (model->version() != TFLITE_SCHEMA_VERSION) {
-        error_reporter->Report("Model schema version mismatch!");
+        error_reporter->Report("Model is schema version: %d\nSupported schema version is: %d", model->version(), TFLITE_SCHEMA_VERSION);
         return;
     }
+    error_reporter->Report("got model");
 
-    static tflite::MicroMutableOpResolver<10> resolver;
-    resolver.AddBuiltin(tflite::BuiltinOperator_DEPTHWISE_CONV_2D, tflite::ops::micro::Register_DEPTHWISE_CONV_2D());
-    resolver.AddBuiltin(tflite::BuiltinOperator_FULLY_CONNECTED, tflite::ops::micro::Register_FULLY_CONNECTED());
-    resolver.AddBuiltin(tflite::BuiltinOperator_SOFTMAX, tflite::ops::micro::Register_SOFTMAX());
+    // static tflite::MicroMutableOpResolver resolver;
+    // resolver.AddBuiltin(tflite::BuiltinOperator_DEPTHWISE_CONV_2D, tflite::ops::micro::Register_DEPTHWISE_CONV_2D());
+    // resolver.AddBuiltin(tflite::BuiltinOperator_FULLY_CONNECTED, tflite::ops::micro::Register_FULLY_CONNECTED());
+    // resolver.AddBuiltin(tflite::BuiltinOperator_SOFTMAX, tflite::ops::micro::Register_SOFTMAX());
 
+    static tflite::ops::micro::AllOpsResolver resolver;
     static tflite::MicroInterpreter static_interpreter(model, resolver, tensor_arena, kTensorArenaSize, error_reporter);
     interpreter = &static_interpreter;
 
@@ -49,35 +67,48 @@ void setup() {
         error_reporter->Report("Tensor allocation failed!");
         return;
     }
+    error_reporter->Report("Allocated memory");
+
+    // // Obtain pointers to the model's input and output tensors. 
+    // input = interpreter->input(0); 
+    // output = interpreter->output(0); 
+    // error_reporter->Report( "Results" ); 
+
+    // input_buffer = input->data.f;
 
     Serial.println("Model loaded successfully!");
+
+    // Initialize PDM (Mic)
+    if (!PDM.begin(1, kSampleRate)) { // 1 channel, 16kHz
+      Serial.println("Failed to initalize PDM Mic");
+      return;
+    }
+    PDM.onReceive(captureAudio);
 }
 
 void loop() {
-    // Simulated audio capture and preprocessing
-    const int buffer_size = 16000;  // 1 second of audio at 16kHz
-    int16_t audio_buffer[buffer_size];
-    captureAudio(audio_buffer, buffer_size);
+  if (audio_buffer_index >= kAudioBufferSize) {
+    Serial.println("Audio captured. Processing...");
+    // Reset buffer index for next capture
+    audio_buffer_index = 0;
 
-    const int num_mfcc_features = 12;  // Same as during training
-    float mfcc_features[num_mfcc_features];
-
-    computeMFCC(audio_buffer, mfcc_features);
+    // Extract MFCC features (implement or call a function here)
+    computeMFCC(audio_buffer, kAudioBufferSize, mfcc_features);
 
     // Run inference
     float* input_tensor = interpreter->input(0)->data.f;
     memcpy(input_tensor, mfcc_features, sizeof(mfcc_features));
 
-    if (interpreter->Invoke() != kTfLiteOk) {
-        error_reporter->Report("Inference failed!");
-        return;
+    TfLiteStatus invoke_status = interpreter->Invoke(); 
+    if(invoke_status != kTfLiteOk) { 
+      error_reporter->Report("Invoke failed"); 
+      return; 
     }
 
     // Get the prediction
-    float* output = interpreter->output(0)->data.f;
-    int predicted_class = std::distance(output, std::max_element(output, output + 12));  // Assuming 12 classes
-    Serial.print("Predicted class: ");
+    float* result = interpreter->output(0)->data.f;
+    int predicted_class = std::distance(result, std::max_element(result, result + 36));  // There are 36 classes
+    Serial.print("Predicted Keyword: ");
     Serial.println(predicted_class);
-
-    delay(1000);  // Wait before next inference
+  }
 }
