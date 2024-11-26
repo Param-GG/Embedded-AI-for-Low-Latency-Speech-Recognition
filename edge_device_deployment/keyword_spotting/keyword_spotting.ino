@@ -1,6 +1,8 @@
 #include "Arduino.h"
 #include <TensorFlowLite.h>
-#include "tensorflow/lite/experimental/micro/kernels/all_ops_resolver.h" 
+#include "tensorflow/lite/experimental/micro/kernels/all_ops_resolver.h"
+#include "tensorflow/lite/experimental/micro/kernels/micro_ops.h"
+#include "tensorflow/lite/experimental/micro/micro_mutable_op_resolver.h"
 #include "tensorflow/lite/experimental/micro/micro_error_reporter.h" 
 #include "tensorflow/lite/experimental/micro/micro_interpreter.h" 
 #include "tensorflow/lite/schema/schema_generated.h" 
@@ -10,7 +12,7 @@
 #include "model.h"  // Include the quantized model
 
 // Global Variables for TensorFlow Lite
-constexpr int kTensorArenaSize = 10 * 1024;  // Adjust based on model size
+constexpr int kTensorArenaSize = 120 * 1024;  // Adjust based on model size
 uint8_t tensor_arena[kTensorArenaSize] = {0};
 
 tflite::MicroInterpreter* interpreter = nullptr;
@@ -27,6 +29,7 @@ int16_t audio_buffer[kAudioBufferSize];
 volatile int audio_buffer_index = 0;
 float mfcc_features[99][NUM_MFCC_FEATURES];
 
+
 // Function to Capture Audio using onboard PDM Mic
 void captureAudio() {
   while (PDM.available()) {
@@ -35,7 +38,11 @@ void captureAudio() {
     if (audio_buffer_index < kAudioBufferSize) {
       audio_buffer[audio_buffer_index++] = sample;
     }
+    Serial.print("Sample captured: ");
+    Serial.println(sample);
   }
+  Serial.print("Audio buffer index: ");
+  Serial.println(audio_buffer_index);  // Print the buffer index periodically
 }
 
 void setup() {
@@ -47,19 +54,24 @@ void setup() {
     static tflite::MicroErrorReporter micro_error_reporter;
     error_reporter = &micro_error_reporter;
 
-    const tflite::Model* model = tflite::GetModel(model);
+    const tflite::Model* model = tflite::GetModel(model_data);
+    Serial.print("Model size in bytes: ");
+    Serial.println(model_data_len);
     if (model->version() != TFLITE_SCHEMA_VERSION) {
         error_reporter->Report("Model is schema version: %d\nSupported schema version is: %d", model->version(), TFLITE_SCHEMA_VERSION);
         return;
     }
     error_reporter->Report("got model");
 
-    // static tflite::MicroMutableOpResolver resolver;
-    // resolver.AddBuiltin(tflite::BuiltinOperator_DEPTHWISE_CONV_2D, tflite::ops::micro::Register_DEPTHWISE_CONV_2D());
-    // resolver.AddBuiltin(tflite::BuiltinOperator_FULLY_CONNECTED, tflite::ops::micro::Register_FULLY_CONNECTED());
-    // resolver.AddBuiltin(tflite::BuiltinOperator_SOFTMAX, tflite::ops::micro::Register_SOFTMAX());
+    static tflite::MicroMutableOpResolver resolver;
+    resolver.AddBuiltin(tflite::BuiltinOperator_DEPTHWISE_CONV_2D,
+                        tflite::ops::micro::Register_DEPTHWISE_CONV_2D());
+    resolver.AddBuiltin(tflite::BuiltinOperator_RELU,
+                        tflite::ops::micro::Register_RELU());
+    resolver.AddBuiltin(tflite::BuiltinOperator_SOFTMAX,
+                        tflite::ops::micro::Register_SOFTMAX());
 
-    static tflite::ops::micro::AllOpsResolver resolver;
+    // static tflite::ops::micro::AllOpsResolver resolver;
     static tflite::MicroInterpreter static_interpreter(model, resolver, tensor_arena, kTensorArenaSize, error_reporter);
     interpreter = &static_interpreter;
 
@@ -83,6 +95,7 @@ void setup() {
       Serial.println("Failed to initalize PDM Mic");
       return;
     }
+    Serial.println("Capturing audio...");
     PDM.onReceive(captureAudio);
 }
 
