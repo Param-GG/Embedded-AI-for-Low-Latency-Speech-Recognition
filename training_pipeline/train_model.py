@@ -107,11 +107,12 @@ def quantize_and_export(model, output_path="model.tflite"):
 
     # Export as a C array for Arduino
     with open(output_path.replace(".tflite", ".h"), "w") as f:
-        f.write("#include <stddef.h>\n\n")
-        f.write("const unsigned char model[] = {\n")
+        # f.write("#include <stddef.h>\n\n")
+        f.write("const unsigned char model_data[] = {\n")
         f.write(",".join(f"0x{b:02x}" for b in tflite_model) + "\n")
         f.write("};\n")
-        f.write(f"const unsigned int model_len = {len(tflite_model)};\n")
+        f.write(f"const unsigned int model_data_len = {len(tflite_model)};\n")
 
+    print(f"Quantized model exported to {output_path}")
 
-quantize_and_export(model, "edge_device_deployment/model.h")
+quantize_and_export(model, "edge_device_deployment\keyword_spotting\model.h")
