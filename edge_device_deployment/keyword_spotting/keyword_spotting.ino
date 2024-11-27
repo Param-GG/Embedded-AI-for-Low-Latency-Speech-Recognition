@@ -81,12 +81,31 @@ void setup() {
     }
     error_reporter->Report("Allocated memory");
 
+<<<<<<< HEAD
     // // Obtain pointers to the model's input and output tensors. 
     // input = interpreter->input(0); 
     // output = interpreter->output(0); 
     // error_reporter->Report( "Results" ); 
 
     // input_buffer = input->data.f;
+=======
+  // static tflite::MicroMutableOpResolver resolver;
+  static tflite::micro::ops::AllOpsResolver resolver;
+
+  // // Register the operators used in your model
+  // resolver.AddBuiltin(tflite::BuiltinOperator_CONV_2D,
+  //                     tflite::ops::micro::Register_CONV_2D());
+  // resolver.AddBuiltin(tflite::BuiltinOperator_DEPTHWISE_CONV_2D,
+  //                     tflite::ops::micro::Register_DEPTHWISE_CONV_2D());
+  // resolver.AddBuiltin(tflite::BuiltinOperator_RELU,
+  //                     tflite::ops::micro::Register_RELU());
+  // resolver.AddBuiltin(tflite::BuiltinOperator_ADD,
+  //                     tflite::ops::micro::Register_ADD());
+  // resolver.AddBuiltin(tflite::BuiltinOperator_AVERAGE_POOL_2D,
+  //                     tflite::ops::micro::Register_AVERAGE_POOL_2D());
+  // resolver.AddBuiltin(tflite::BuiltinOperator_FULLY_CONNECTED,
+  //                     tflite::ops::micro::Register_FULLY_CONNECTED());
+>>>>>>> 6e53c3acac19bfb2761e8161add95e7914f1c66c
 
     Serial.println("Model loaded successfully!");
 
