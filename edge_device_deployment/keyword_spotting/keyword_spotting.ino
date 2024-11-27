@@ -3,92 +3,85 @@
 #include "tensorflow/lite/experimental/micro/kernels/all_ops_resolver.h"
 #include "tensorflow/lite/experimental/micro/kernels/micro_ops.h"
 #include "tensorflow/lite/experimental/micro/micro_mutable_op_resolver.h"
-#include "tensorflow/lite/experimental/micro/micro_error_reporter.h" 
-#include "tensorflow/lite/experimental/micro/micro_interpreter.h" 
-#include "tensorflow/lite/schema/schema_generated.h" 
+#include "tensorflow/lite/experimental/micro/micro_error_reporter.h"
+#include "tensorflow/lite/experimental/micro/micro_interpreter.h"
+#include "tensorflow/lite/schema/schema_generated.h"
 #include "tensorflow/lite/version.h"
-#include <PDM.h>  // For capturing audio using the onboard microphone
+#include <PDM.h> // For capturing audio using the onboard microphone
 #include "compute_mfcc.h"
-#include "model.h"  // Include the quantized model
+#include "model.h" // Include the quantized model
 
-// Global Variables for TensorFlow Lite
-constexpr int kTensorArenaSize = 120 * 1024;  // Adjust based on model size
-uint8_t tensor_arena[kTensorArenaSize] = {0};
+// Audio settings
+#define AUDIO_BUFFER_SIZE 16000 // 100ms of audio at 16kHz
+int16_t audioBuffer[AUDIO_BUFFER_SIZE];
+volatile int audioBufferIndex = 0;
 
-tflite::MicroInterpreter* interpreter = nullptr;
-tflite::ErrorReporter* error_reporter = nullptr;
-// TfLiteTensor* input = nullptr; 
-// TfLiteTensor* output = nullptr; 
-// float* input_buffer = nullptr;
+// TensorFlow Lite globals
+constexpr int tensorArenaSize = 140 * 1024; // Adjust based on available RAM
+uint8_t tensorArena[tensorArenaSize];
+tflite::ErrorReporter *errorReporter;
+tflite::MicroInterpreter *interpreter;
+TfLiteTensor *inputTensor;
 
-// Audio capture globals
-const int kSampleRate = 16000;  // Sampling rate in Hz
-const int kAudioCaptureDuration = 1;  // Capture 1 second of audio
-const int kAudioBufferSize = kSampleRate * kAudioCaptureDuration;  // 16,000 samples for 1 second
-int16_t audio_buffer[kAudioBufferSize];
-volatile int audio_buffer_index = 0;
-float mfcc_features[99][NUM_MFCC_FEATURES];
+// MFCC buffer
+#define MAX_FRAMES 99 // (16000/8000)*(1000ms/20ms) - Adjust based on available RAM
+float mfccFeatures[MAX_FRAMES][NUM_MFCC_FEATURES];
 
+// Flag to indicate audio readiness
+volatile bool isAudioReady = false;
 
-// Function to Capture Audio using onboard PDM Mic
-void captureAudio() {
-  while (PDM.available()) {
-    int16_t sample;
-    PDM.read(&sample, sizeof(int16_t));
-    if (audio_buffer_index < kAudioBufferSize) {
-      audio_buffer[audio_buffer_index++] = sample;
+// PDM callback
+void onPDMData()
+{
+  int bytesAvailable = PDM.available();
+  if (bytesAvailable > 0)
+  {
+    // int bytesToRead = min(bytesAvailable, (AUDIO_BUFFER_SIZE - audioBufferIndex) * sizeof(int16_t));
+    int bytesToRead = min(bytesAvailable, (AUDIO_BUFFER_SIZE - audioBufferIndex) * 2);
+    // PDM.read((uint8_t *)&audioBuffer[audioBufferIndex], bytesToRead);
+    PDM.read(audioBuffer, bytesToRead);
+    // audioBufferIndex += bytesToRead / sizeof(int16_t);
+    audioBufferIndex += bytesToRead / 2;
+    if (audioBufferIndex >= AUDIO_BUFFER_SIZE)
+    {
+      isAudioReady = true;
+      audioBufferIndex = 0;
     }
-    Serial.print("Sample captured: ");
-    Serial.println(sample);
   }
-  Serial.print("Audio buffer index: ");
-  Serial.println(audio_buffer_index);  // Print the buffer index periodically
 }
 
-void setup() {
-    Serial.begin(9600);
-    while (!Serial);
-    Serial.println("Started");
-    
-    // TensorFlow Lite Initialization
-    static tflite::MicroErrorReporter micro_error_reporter;
-    error_reporter = &micro_error_reporter;
+void setup()
+{
+  Serial.begin(115200);
+  while (!Serial)
+    ;
 
-    const tflite::Model* model = tflite::GetModel(model_data);
-    Serial.print("Model size in bytes: ");
-    Serial.println(model_data_len);
-    if (model->version() != TFLITE_SCHEMA_VERSION) {
-        error_reporter->Report("Model is schema version: %d\nSupported schema version is: %d", model->version(), TFLITE_SCHEMA_VERSION);
-        return;
-    }
-    error_reporter->Report("got model");
+  // Initialize PDM microphone
+  Serial.println("Initializing mic...");
+  PDM.onReceive(onPDMData);
+  if (!PDM.begin(1, INPUT_SAMPLE_RATE))
+  {
+    Serial.println("Failed to start PDM microphone!");
+    while (1)
+      ;
+  }
+  Serial.println("Initialized mic.");
 
-    static tflite::MicroMutableOpResolver resolver;
-    resolver.AddBuiltin(tflite::BuiltinOperator_DEPTHWISE_CONV_2D,
-                        tflite::ops::micro::Register_DEPTHWISE_CONV_2D());
-    resolver.AddBuiltin(tflite::BuiltinOperator_RELU,
-                        tflite::ops::micro::Register_RELU());
-    resolver.AddBuiltin(tflite::BuiltinOperator_SOFTMAX,
-                        tflite::ops::micro::Register_SOFTMAX());
+  // Initialize MFCC precomputed data
+  initialize_mfcc();
 
-    // static tflite::ops::micro::AllOpsResolver resolver;
-    static tflite::MicroInterpreter static_interpreter(model, resolver, tensor_arena, kTensorArenaSize, error_reporter);
-    interpreter = &static_interpreter;
+  // Initialize TensorFlow Lite
+  static tflite::MicroErrorReporter microErrorReporter;
+  errorReporter = &microErrorReporter;
 
-    if (interpreter->AllocateTensors() != kTfLiteOk) {
-        error_reporter->Report("Tensor allocation failed!");
-        return;
-    }
-    error_reporter->Report("Allocated memory");
+  const tflite::Model *model = tflite::GetModel(model_data);
+  if (model->version() != TFLITE_SCHEMA_VERSION)
+  {
+    errorReporter->Report("Model schema mismatch!");
+    while (1)
+      ;
+  }
 
-<<<<<<< HEAD
-    // // Obtain pointers to the model's input and output tensors. 
-    // input = interpreter->input(0); 
-    // output = interpreter->output(0); 
-    // error_reporter->Report( "Results" ); 
-
-    // input_buffer = input->data.f;
-=======
   // static tflite::MicroMutableOpResolver resolver;
   static tflite::micro::ops::AllOpsResolver resolver;
 
@@ -105,42 +98,82 @@ void setup() {
   //                     tflite::ops::micro::Register_AVERAGE_POOL_2D());
   // resolver.AddBuiltin(tflite::BuiltinOperator_FULLY_CONNECTED,
   //                     tflite::ops::micro::Register_FULLY_CONNECTED());
->>>>>>> 6e53c3acac19bfb2761e8161add95e7914f1c66c
 
-    Serial.println("Model loaded successfully!");
+  static tflite::MicroInterpreter staticInterpreter(
+      model, resolver, tensorArena, tensorArenaSize, errorReporter);
+  interpreter = &staticInterpreter;
 
-    // Initialize PDM (Mic)
-    if (!PDM.begin(1, kSampleRate)) { // 1 channel, 16kHz
-      Serial.println("Failed to initalize PDM Mic");
-      return;
-    }
-    Serial.println("Capturing audio...");
-    PDM.onReceive(captureAudio);
+  if (interpreter->AllocateTensors() != kTfLiteOk)
+  {
+    errorReporter->Report("Failed to allocate tensors!");
+    while (1)
+      ;
+  }
+
+  inputTensor = interpreter->input(0);
+  if (inputTensor->dims->data[1] != MAX_FRAMES || inputTensor->dims->data[2] != NUM_MFCC_FEATURES)
+  {
+    errorReporter->Report("Unexpected input tensor shape!");
+    while (1)
+      ;
+  }
+
+  Serial.println("Setup complete.");
 }
 
-void loop() {
-  if (audio_buffer_index >= kAudioBufferSize) {
-    Serial.println("Audio captured. Processing...");
-    // Reset buffer index for next capture
-    audio_buffer_index = 0;
-
-    // Extract MFCC features (implement or call a function here)
-    computeMFCC(audio_buffer, kAudioBufferSize, mfcc_features);
-
-    // Run inference
-    float* input_tensor = interpreter->input(0)->data.f;
-    memcpy(input_tensor, mfcc_features, sizeof(mfcc_features));
-
-    TfLiteStatus invoke_status = interpreter->Invoke(); 
-    if(invoke_status != kTfLiteOk) { 
-      error_reporter->Report("Invoke failed"); 
-      return; 
-    }
-
-    // Get the prediction
-    float* result = interpreter->output(0)->data.f;
-    int predicted_class = std::distance(result, std::max_element(result, result + 36));  // There are 36 classes
-    Serial.print("Predicted Keyword: ");
-    Serial.println(predicted_class);
+void loop()
+{
+  if (!isAudioReady)
+  {
+    // Serial.println("Audio not ready.");
+    return;
   }
+
+  // Reset the flag
+  isAudioReady = false;
+
+  // Compute MFCC features
+  Serial.println("Computing MFCCs.");
+  computeMFCC(audioBuffer, AUDIO_BUFFER_SIZE, mfccFeatures);
+
+  Serial.println("Copying MFCCs to input tensor.");
+  // Copy MFCC features to input tensor
+  for (int i = 0; i < MAX_FRAMES; i++)
+  {
+    for (int j = 0; j < NUM_MFCC_FEATURES; j++)
+    {
+      inputTensor->data.f[i * NUM_MFCC_FEATURES + j] = mfccFeatures[i][j];
+    }
+  }
+
+  Serial.println("Performing inference.");
+  // Perform inference
+  if (interpreter->Invoke() != kTfLiteOk)
+  {
+    errorReporter->Report("Invoke failed!");
+    return;
+  }
+
+  // Get predictions
+  TfLiteTensor *outputTensor = interpreter->output(0);
+  float *predictions = outputTensor->data.f;
+  int numPredictions = outputTensor->dims->data[1];
+  Serial.println("Getting prediction.");
+
+  // Find the best prediction
+  int maxIndex = 0;
+  float maxScore = predictions[0];
+  for (int i = 1; i < numPredictions; i++)
+  {
+    if (predictions[i] > maxScore)
+    {
+      maxScore = predictions[i];
+      maxIndex = i;
+    }
+  }
+
+  Serial.print("Detected class: ");
+  Serial.print(maxIndex);
+  Serial.print(" with confidence: ");
+  Serial.println(maxScore);
 }
