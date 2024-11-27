@@ -83,22 +83,22 @@ void setup()
       ;
   }
 
-  static tflite::MicroMutableOpResolver resolver;
-  // static tflite::AllOpsResolver resolver;
+  // static tflite::MicroMutableOpResolver resolver;
+  static tflite::micro::ops::AllOpsResolver resolver;
 
-  Register the operators used in your model
-  resolver.AddBuiltin(tflite::BuiltinOperator_CONV_2D,
-                      tflite::ops::micro::Register_CONV_2D());
-  resolver.AddBuiltin(tflite::BuiltinOperator_DEPTHWISE_CONV_2D,
-                      tflite::ops::micro::Register_DEPTHWISE_CONV_2D());
-  resolver.AddBuiltin(tflite::BuiltinOperator_RELU,
-                      tflite::ops::micro::Register_RELU());
-  resolver.AddBuiltin(tflite::BuiltinOperator_ADD,
-                      tflite::ops::micro::Register_ADD());
-  resolver.AddBuiltin(tflite::BuiltinOperator_AVERAGE_POOL_2D,
-                      tflite::ops::micro::Register_AVERAGE_POOL_2D());
-  resolver.AddBuiltin(tflite::BuiltinOperator_FULLY_CONNECTED,
-                      tflite::ops::micro::Register_FULLY_CONNECTED());
+  // // Register the operators used in your model
+  // resolver.AddBuiltin(tflite::BuiltinOperator_CONV_2D,
+  //                     tflite::ops::micro::Register_CONV_2D());
+  // resolver.AddBuiltin(tflite::BuiltinOperator_DEPTHWISE_CONV_2D,
+  //                     tflite::ops::micro::Register_DEPTHWISE_CONV_2D());
+  // resolver.AddBuiltin(tflite::BuiltinOperator_RELU,
+  //                     tflite::ops::micro::Register_RELU());
+  // resolver.AddBuiltin(tflite::BuiltinOperator_ADD,
+  //                     tflite::ops::micro::Register_ADD());
+  // resolver.AddBuiltin(tflite::BuiltinOperator_AVERAGE_POOL_2D,
+  //                     tflite::ops::micro::Register_AVERAGE_POOL_2D());
+  // resolver.AddBuiltin(tflite::BuiltinOperator_FULLY_CONNECTED,
+  //                     tflite::ops::micro::Register_FULLY_CONNECTED());
 
 
   static tflite::MicroInterpreter staticInterpreter(
