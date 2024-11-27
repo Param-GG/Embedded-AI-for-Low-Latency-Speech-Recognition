@@ -6,6 +6,7 @@ import preprocess_data
 # Set constants
 SAVED_MODEL_DIR = "rcnn_model_speech_commands"
 TFLITE_MODEL_PATH = "rcnn_model_quantized.tflite"
+SAVED_MODEL_PATH = "rcnn_model_speech_commands.h5"
 
 
 # 1. Prepare Dataset
@@ -103,7 +104,7 @@ if __name__ == "__main__":
 
     # Save the trained model
     os.makedirs(SAVED_MODEL_DIR, exist_ok=True)
-    model.save(SAVED_MODEL_DIR)
+    model.save(os.path.join(SAVED_MODEL_DIR, SAVED_MODEL_PATH))
     print(f"Trained model saved to {SAVED_MODEL_DIR}")
 
     # Quantize and export the model
