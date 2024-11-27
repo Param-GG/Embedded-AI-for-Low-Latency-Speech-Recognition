@@ -66,6 +66,7 @@ void setup()
       ;
   }
   Serial.println("Initialized mic.");
+  
 
   // Initialize MFCC precomputed data
   initialize_mfcc();
@@ -99,6 +100,7 @@ void setup()
   // resolver.AddBuiltin(tflite::BuiltinOperator_FULLY_CONNECTED,
   //                     tflite::ops::micro::Register_FULLY_CONNECTED());
 
+
   static tflite::MicroInterpreter staticInterpreter(
       model, resolver, tensorArena, tensorArenaSize, errorReporter);
   interpreter = &staticInterpreter;
@@ -123,8 +125,7 @@ void setup()
 
 void loop()
 {
-  if (!isAudioReady)
-  {
+  if (!isAudioReady) {
     // Serial.println("Audio not ready.");
     return;
   }
