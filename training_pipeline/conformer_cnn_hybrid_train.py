@@ -1,175 +1,122 @@
 import tensorflow as tf
-import tensorflow_addons as tfa
-import numpy as np
-import matplotlib.pyplot as plt
-from tensorflow.keras import layers, models, regularizers
+from tensorflow.keras import layers, models
 import preprocess_data
 
-# Configuration
-BATCH_SIZE = 32
-EPOCHS = 150
-NUM_CLASSES = None  # Will be set dynamically
 
-# Load Dataset
-train_ds, val_ds, class_names = preprocess_data.prepare_speech_commands_dataset(
-    "./datasets/speech_commands_v0.02", batch_size=BATCH_SIZE
-)
-NUM_CLASSES = len(class_names)
-
-
-# Relative Positional Embedding
-class RelativePositionalEmbedding(layers.Layer):
-    def __init__(self, units, max_distance=20, **kwargs):
-        super().__init__(**kwargs)
-        self.units = units
-        self.max_distance = max_distance
-
-    def build(self, input_shape):
-        self.relative_embedding = self.add_weight(
-            shape=(2 * self.max_distance + 1, input_shape[-1]),
-            initializer="glorot_uniform",
-            trainable=True,
-        )
-        super().build(input_shape)
-
-    def call(self, inputs):
-        seq_len = tf.shape(inputs)[1]
-        indices = tf.range(-self.max_distance, self.max_distance + 1)
-        relative_indices = tf.minimum(tf.maximum(indices, -seq_len + 1), seq_len - 1)
-        return tf.gather(self.relative_embedding, relative_indices + self.max_distance)
-
-
-# Multi-Head Self-Attention with Relative Positional Encoding
-class ConformerAttention(layers.Layer):
-    def __init__(self, units, num_heads=4, dropout_rate=0.1, **kwargs):
-        super().__init__(**kwargs)
-        self.units = units
-        self.num_heads = num_heads
+# 1. Define the Custom Conformer Layer
+class ConformerLayer(layers.Layer):
+    def __init__(self, filters, kernel_size, dropout_rate=0.1, **kwargs):
+        super(ConformerLayer, self).__init__(**kwargs)
+        self.filters = filters
+        self.kernel_size = kernel_size
         self.dropout_rate = dropout_rate
 
-    def build(self, input_shape):
-        self.query_dense = layers.Dense(self.units)
-        self.key_dense = layers.Dense(self.units)
-        self.value_dense = layers.Dense(self.units)
-        self.output_dense = layers.Dense(self.units)
+        # Depthwise Separable Convolution
+        self.depthwise_conv = layers.DepthwiseConv2D(
+            kernel_size, padding="same", activation="relu"
+        )
+        self.pointwise_conv = layers.Conv2D(
+            filters, (1, 1), padding="same", activation="relu"
+        )
+        self.dropout = layers.Dropout(dropout_rate)
+        self.layer_norm = layers.LayerNormalization()
 
-        self.positional_encoding = RelativePositionalEmbedding(self.units)
-
-        super().build(input_shape)
-
-    def split_heads(self, x):
-        batch_size = tf.shape(x)[0]
-        length = tf.shape(x)[1]
-        depth_per_head = self.units // self.num_heads
-
-        x = tf.reshape(x, (batch_size, length, self.num_heads, depth_per_head))
-        return tf.transpose(x, perm=[0, 2, 1, 3])
+        # Feed-Forward Network
+        self.ffn1 = layers.Dense(filters * 4, activation="relu")
+        self.ffn2 = layers.Dense(filters, activation="relu")
 
     def call(self, inputs, training=None):
-        query = self.query_dense(inputs)
-        key = self.key_dense(inputs)
-        value = self.value_dense(inputs)
+        # Depthwise Separable Convolution
+        conv = self.depthwise_conv(inputs)
+        conv = self.pointwise_conv(conv)
+        conv = self.dropout(conv, training=training)
+        conv = conv + inputs  # Residual connection
+        conv = self.layer_norm(conv)
 
-        query = self.split_heads(query)
-        key = self.split_heads(key)
-        value = self.split_heads(value)
+        # Feed-Forward Network
+        ffn = self.ffn1(conv)
+        ffn = self.ffn2(ffn)
+        ffn = self.dropout(ffn, training=training)
+        ffn = ffn + conv  # Residual connection
+        ffn = self.layer_norm(ffn)
 
-        scale = tf.math.sqrt(tf.cast(tf.shape(key)[-1], tf.float32))
-        attention_scores = tf.matmul(query, key, transpose_b=True) / scale
-
-        # Add relative positional encoding
-        positional_embedding = self.positional_encoding(inputs)
-        attention_scores += positional_embedding
-
-        attention_weights = tf.nn.softmax(attention_scores, axis=-1)
-        attention_output = tf.matmul(attention_weights, value)
-
-        attention_output = tf.transpose(attention_output, perm=[0, 2, 1, 3])
-        attention_output = tf.reshape(
-            attention_output,
-            (tf.shape(attention_output)[0], tf.shape(attention_output)[1], self.units),
-        )
-
-        return self.output_dense(attention_output)
+        return ffn
 
 
-def build_conformer_hybrid_model(input_shape):
+# 2. Build the Conformer Model
+def build_conformer_model(input_shape, num_classes):
     inputs = layers.Input(shape=input_shape)
 
-    # Initial CNN blocks
-    x = layers.Conv2D(32, (3, 3), activation="relu", padding="same")(inputs)
-    x = layers.BatchNormalization()(x)
-    x = layers.MaxPooling2D(pool_size=(2, 2))(x)
+    x = inputs
+    # Stack Conformer layers
+    for _ in range(3):  # Stack 3 Conformer layers
+        x = ConformerLayer(filters=64, kernel_size=(3, 3))(x)
 
-    x = layers.Conv2D(64, (3, 3), activation="relu", padding="same")(x)
-    x = layers.BatchNormalization()(x)
-    x = layers.MaxPooling2D(pool_size=(2, 2))(x)
+    # Global Average Pooling
+    x = layers.GlobalAveragePooling2D()(x)
 
-    # Reshape for sequence modeling
-    x = layers.Reshape((-1, x.shape[-1]))(x)
+    # Classification head
+    outputs = layers.Dense(num_classes, activation="softmax")(x)
 
-    # Conformer Blocks
-    x = layers.Dense(128, activation="relu")(x)
-    x = ConformerAttention(units=128, num_heads=4)(x)
-    x = layers.LayerNormalization()(x)
-
-    x = layers.GlobalAveragePooling1D()(x)
-
-    # Classification Layer
-    outputs = layers.Dense(NUM_CLASSES, activation="softmax")(x)
-
-    model = models.Model(inputs=inputs, outputs=outputs)
+    model = models.Model(inputs, outputs)
     return model
 
 
-# Build and Compile Model
-model = build_conformer_hybrid_model((99, 12, 1))
-model.compile(
-    optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
-    loss="sparse_categorical_crossentropy",
-    metrics=["accuracy"],
+# 3. Prepare the Dataset
+train_ds, val_ds, class_names = preprocess_data.prepare_speech_commands_dataset(
+    "./datasets/speech_commands_v0.02"
 )
 
-# Training
-history = model.fit(train_ds, validation_data=val_ds, epochs=EPOCHS)
+train_ds = train_ds.map(
+    preprocess_data.preprocess_audio, num_parallel_calls=tf.data.AUTOTUNE
+)
+val_ds = val_ds.map(
+    preprocess_data.preprocess_audio, num_parallel_calls=tf.data.AUTOTUNE
+)
+
+train_ds = train_ds.prefetch(tf.data.AUTOTUNE)
+val_ds = val_ds.prefetch(tf.data.AUTOTUNE)
+
+input_shape = (99, 12, 1)  # Adjust based on MFCC output
+num_classes = len(class_names)
+
+# 4. Compile and Train the Model
+model = build_conformer_model(input_shape, num_classes)
+model.compile(
+    optimizer="adam", loss="sparse_categorical_crossentropy", metrics=["accuracy"]
+)
+
+history = model.fit(train_ds, validation_data=val_ds, epochs=1)
 
 
-# Visualization Function
-def print_acc_and_loss(history):
-    plt.figure(figsize=(12, 5))
+# 5. Quantize the Model for Deployment
+def quantize_and_export(model, output_path="model_conformer.tflite"):
+    # Create a representative dataset generator for quantization
+    def representative_dataset():
+        for batch, label in val_ds.take(100):
+            yield [batch.numpy()]
 
-    plt.subplot(121)
-    plt.plot(history.history["loss"], label="Training Loss")
-    plt.plot(history.history["val_loss"], label="Validation Loss")
-    plt.title("Training and Validation Loss")
-    plt.xlabel("Epoch")
-    plt.ylabel("Loss")
-    plt.legend()
-
-    plt.subplot(122)
-    plt.plot(history.history["accuracy"], label="Training Accuracy")
-    plt.plot(history.history["val_accuracy"], label="Validation Accuracy")
-    plt.title("Training and Validation Accuracy")
-    plt.xlabel("Epoch")
-    plt.ylabel("Accuracy")
-    plt.legend()
-
-    plt.tight_layout()
-    plt.show()
-
-
-print_acc_and_loss(history)
-
-
-# TFLite Conversion and Export
-def quantize_and_export(model, output_path="model.h"):
+    # Convert to TensorFlow Lite model with integer-only quantization
     converter = tf.lite.TFLiteConverter.from_keras_model(model)
     converter.optimizations = [tf.lite.Optimize.DEFAULT]
-    converter.target_spec.supported_types = [tf.float16]
+    converter.representative_dataset = representative_dataset
+    converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
+    converter.inference_input_type = tf.int8
+    converter.inference_output_type = tf.int8
+
     tflite_model = converter.convert()
 
+    # Save the TFLite model
     with open(output_path, "wb") as f:
         f.write(tflite_model)
 
+    # Export as a C array for Arduino
+    with open(output_path.replace(".tflite", ".h"), "w") as f:
+        f.write("#include <stddef.h>\n\n")
+        f.write("const unsigned char model_conformer[] = {")
+        f.write(",".join(f"0x{b:02x}" for b in tflite_model))
+        f.write("};\n")
+        f.write(f"const unsigned int model_conformer_len = {len(tflite_model)};\n")
 
-quantize_and_export(model, "edge_device_deployment/conformer_model.tflite")
+
+quantize_and_export(model, "edge_device_deployment/model_conformer.h")
