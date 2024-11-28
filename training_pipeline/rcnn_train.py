@@ -2,6 +2,10 @@ import os
 import tensorflow as tf
 from tensorflow.keras import layers, models
 import preprocess_data
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.metrics import classification_report
+
 
 # Set constants
 SAVED_MODEL_DIR = "rcnn_model_speech_commands"
@@ -12,11 +16,13 @@ SAVED_MODEL_PATH = "rcnn_model_speech_commands.h5"
 # 1. Prepare Dataset
 def prepare_datasets():
     # 1. Load and preprocess dataset
-    train_ds, val_ds, class_names = preprocess_data.prepare_speech_commands_dataset(
-        "./datasets/speech_commands_v0.02"
+    train_ds, val_ds, test_ds, class_names = (
+        preprocess_data.prepare_speech_commands_dataset(
+            "./datasets/speech_commands_v0.02"
+        )
     )
 
-    return train_ds, val_ds, class_names
+    return train_ds, val_ds, test_ds, class_names
 
 
 # 2. Build RCNN Model
@@ -66,33 +72,106 @@ def train_model(model, train_ds, val_ds, epochs=10):
     return model, history
 
 
-# 4. Quantize Model
-def quantize_model(model, representative_data_gen):
-    """
-    Converts the trained model to a TensorFlow Lite model with quantization.
-    """
+# # 4. Quantize Model
+# def quantize_model(model, representative_data_gen):
+#     """
+#     Converts the trained model to a TensorFlow Lite model with quantization.
+#     """
+#     converter = tf.lite.TFLiteConverter.from_keras_model(model)
+#     converter.optimizations = [tf.lite.Optimize.DEFAULT]
+#     converter.representative_dataset = representative_data_gen
+#     tflite_model = converter.convert()
+
+#     with open(TFLITE_MODEL_PATH, "wb") as f:
+#         f.write(tflite_model)
+#     print(f"Quantized model saved to {TFLITE_MODEL_PATH}")
+
+
+# def representative_data_gen():
+#     """
+#     Generator for representative dataset used for quantization.
+#     """
+#     for mfccs, _ in train_ds.take(100):
+#         yield [mfccs]
+
+
+# 4. Print accuracy and loss curves
+def print_acc_and_loss(history):
+    plt.figure(figsize=(12, 5))
+
+    plt.subplot(121)
+    plt.plot(history.history["loss"], label="Training Loss")
+    plt.plot(history.history["val_loss"], label="Validation Loss")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.title("Training and Validation Loss")
+    plt.legend()
+
+    plt.subplot(122)
+    plt.plot(history.history["accuracy"], label="Training Accuracy")
+    plt.plot(history.history["val_accuracy"], label="Validation Accuracy")
+    plt.xlabel("Epoch")
+    plt.ylabel("Accuracy")
+    plt.title("Training and Validation Accuracy")
+    plt.legend()
+
+    plt.tight_layout()
+    plt.show()
+
+
+# 6. Quantize and export
+def quantize_and_export(model, output_path="model.tflite"):
+    import numpy as np
+
+    # Create a representative dataset generator for quantization
+    def representative_dataset():
+        for _ in range(100):
+            # Replace with actual representative MFCC input samples
+            data = np.random.rand(1, 99, 12, 1).astype(np.float32)
+            yield [data]
+
+    # Convert to TensorFlow Lite model with integer-only quantization
     converter = tf.lite.TFLiteConverter.from_keras_model(model)
     converter.optimizations = [tf.lite.Optimize.DEFAULT]
-    converter.representative_dataset = representative_data_gen
+    converter.representative_dataset = representative_dataset
+    converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
+    converter.inference_input_type = tf.int8  # Quantize inputs to int8
+    converter.inference_output_type = tf.int8  # Quantize outputs to int8
+
     tflite_model = converter.convert()
 
-    with open(TFLITE_MODEL_PATH, "wb") as f:
+    # Save the TFLite model in binary format for Arduino deployment
+    with open(output_path, "wb") as f:
         f.write(tflite_model)
-    print(f"Quantized model saved to {TFLITE_MODEL_PATH}")
+
+    # Export as a C array for Arduino
+    with open(output_path.replace(".tflite", ".h"), "w") as f:
+        # f.write("#include <stddef.h>\n\n")
+        f.write("const unsigned char model_data[] = {\n")
+        f.write(",".join(f"0x{b:02x}" for b in tflite_model) + "\n")
+        f.write("};\n")
+        f.write(f"const unsigned int model_data_len = {len(tflite_model)};\n")
+
+    print(f"Quantized model exported to {output_path}")
 
 
-def representative_data_gen():
-    """
-    Generator for representative dataset used for quantization.
-    """
-    for mfccs, _ in train_ds.take(100):
-        yield [mfccs]
+# 5. Evaluate on test set
+def evaluate_model(model, test_ds):
+    y_true = []
+    y_pred = []
+
+    for feats, labels in test_ds:
+        y_true.extend(labels)
+        y_pred_prob = model.predict(feats)
+        y_pred.extend(np.argmax(y_pred_prob, axis=1))
+
+    print(classification_report(y_true, y_pred, target_names=class_names))
 
 
 # 5. Main Function
 if __name__ == "__main__":
     # Dataset preparation
-    train_ds, val_ds, class_names = prepare_datasets()
+    train_ds, val_ds, test_ds, class_names = prepare_datasets()
 
     # Build model
     # input_shape = [None, preprocess_data.preprocess_audio.NUM_MFCCS, 1]
@@ -107,7 +186,11 @@ if __name__ == "__main__":
     model.save(os.path.join(SAVED_MODEL_DIR, SAVED_MODEL_PATH))
     print(f"Trained model saved to {SAVED_MODEL_DIR}")
 
-    # Quantize and export the model
-    quantize_model(model, representative_data_gen)
+    print_acc_and_loss(history=history)
+
+    # # Quantize and export the model
+    # quantize_model(model, representative_data_gen)
+    evaluate_model(model, test_ds)
+    quantize_and_export(model, "edge_device_deployment\keyword_spotting\rcnn_model.h")
 
     print("Training, quantization, and export completed.")

@@ -4,13 +4,14 @@ import preprocess_data
 import numpy as np
 
 # 1. Load and preprocess dataset with AUTOTUNE
-train_ds, val_ds, class_names = preprocess_data.prepare_speech_commands_dataset(
-    "./datasets/speech_commands_v0.02"
+train_ds, val_ds, test_ds, class_names = (
+    preprocess_data.prepare_speech_commands_dataset("./datasets/speech_commands_v0.02")
 )
 
 # Use AUTOTUNE for better training performance
 train_ds = train_ds.prefetch(buffer_size=tf.data.AUTOTUNE)
 val_ds = val_ds.prefetch(buffer_size=tf.data.AUTOTUNE)
+test_ds = test_ds.prefetch(buffer_size=tf.data.AUTOTUNE)
 
 # The rest of the Knowledge Distillation code remains unchanged
 
@@ -41,7 +42,7 @@ teacher_model.compile(
     loss="sparse_categorical_crossentropy",
     metrics=["accuracy"],
 )
-teacher_model.fit(train_ds, validation_data=val_ds, epochs=1)
+teacher_model.fit(train_ds, validation_data=val_ds, epochs=10)
 teacher_model.save("teacher_model.h5")
 
 

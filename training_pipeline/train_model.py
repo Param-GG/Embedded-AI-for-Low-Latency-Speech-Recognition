@@ -6,8 +6,8 @@ from sklearn.metrics import classification_report
 import preprocess_data
 
 # 1. Load and preprocess dataset
-train_ds, val_ds, test_ds, class_names = preprocess_data.prepare_speech_commands_dataset(
-    "./datasets/speech_commands_v0.02"
+train_ds, val_ds, test_ds, class_names = (
+    preprocess_data.prepare_speech_commands_dataset("./datasets/speech_commands_v0.02")
 )
 
 
@@ -35,7 +35,7 @@ model.compile(
 
 # 3. Compile and train
 def train_model(model):
-    history = model.fit(train_ds, validation_data=val_ds, epochs=100)
+    history = model.fit(train_ds, validation_data=val_ds, epochs=2)
 
     # Extract training and validation accuracy
     train_accuracy = history.history["accuracy"]
@@ -81,6 +81,7 @@ def print_acc_and_loss(history):
 
 print_acc_and_loss(history=history)
 
+
 # 5. Evaluate on test set
 def evaluate_model(model, test_ds):
     y_true = []
@@ -93,7 +94,9 @@ def evaluate_model(model, test_ds):
 
     print(classification_report(y_true, y_pred, target_names=class_names))
 
+
 evaluate_model(model, test_ds)
+
 
 # 6. Quantize and export
 def quantize_and_export(model, output_path="model.tflite"):
@@ -133,4 +136,4 @@ def quantize_and_export(model, output_path="model.tflite"):
 
 quantize_and_export(model, "edge_device_deployment\keyword_spotting\model.h")
 
-# 7. 
+# 7.
