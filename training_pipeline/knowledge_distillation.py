@@ -42,7 +42,7 @@ teacher_model.compile(
     loss="sparse_categorical_crossentropy",
     metrics=["accuracy"],
 )
-teacher_model.fit(train_ds, validation_data=val_ds, epochs=10)
+teacher_model.fit(train_ds, validation_data=val_ds, epochs=7)
 teacher_model.save("teacher_model.h5")
 
 
