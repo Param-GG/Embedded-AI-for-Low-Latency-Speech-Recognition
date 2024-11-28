@@ -33,7 +33,7 @@ model.compile(
 
 # 3. Compile and train
 def train_model(model):
-    history = model.fit(train_ds, validation_data=val_ds, epochs=2)
+    history = model.fit(train_ds, validation_data=val_ds, epochs=100)
 
     # Extract training and validation accuracy
     train_accuracy = history.history["accuracy"]
