@@ -52,7 +52,7 @@ void onPDMData()
 
 void setup()
 {
-  Serial.begin(115200);
+  Serial.begin(9600);
   while (!Serial)
     ;
 
@@ -83,8 +83,8 @@ void setup()
       ;
   }
 
-  // static tflite::MicroMutableOpResolver resolver;
-  static tflite::micro::ops::AllOpsResolver resolver;
+  static tflite::MicroMutableOpResolver resolver;
+  // static tflite::ops::micro::AllOpsResolver resolver;
 
   // // Register the operators used in your model
   // resolver.AddBuiltin(tflite::BuiltinOperator_CONV_2D,

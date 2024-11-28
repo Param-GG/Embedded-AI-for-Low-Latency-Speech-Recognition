@@ -115,4 +115,5 @@ def quantize_and_export(model, output_path="model.tflite"):
 
     print(f"Quantized model exported to {output_path}")
 
+
 quantize_and_export(model, "edge_device_deployment\keyword_spotting\model.h")
