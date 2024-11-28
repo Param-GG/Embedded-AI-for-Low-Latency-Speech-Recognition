@@ -23,6 +23,7 @@ def prepare_datasets():
     )
 
     return train_ds, val_ds, test_ds, class_names
+    return train_ds, val_ds, test_ds, class_names
 
 
 # 2. Build RCNN Model
@@ -171,6 +172,7 @@ def evaluate_model(model, test_ds):
 # 5. Main Function
 if __name__ == "__main__":
     # Dataset preparation
+    train_ds, val_ds, test_ds, class_names = prepare_datasets()
     train_ds, val_ds, test_ds, class_names = prepare_datasets()
 
     # Build model
