@@ -120,7 +120,7 @@ def debug_preprocessing(file_path, label):
 
 
 def prepare_speech_commands_dataset(
-    data_dir, batch_size=32, validation_split=0.2, seed=123
+    data_dir, batch_size=32, validation_split=0.1, test_split=0.1, seed=123
 ):
     """
     Prepare the Speech Commands dataset for training and validation.
@@ -151,13 +151,15 @@ def prepare_speech_commands_dataset(
     # Shuffle and split dataset
     dataset_size = len(file_paths)
     val_size = int(dataset_size * validation_split)
+    test_size = int(dataset_size * test_split)
 
     indices = np.arange(dataset_size)
     np.random.seed(seed)
     np.random.shuffle(indices)
 
-    train_indices = indices[val_size:]
+    train_indices = indices[val_size+test_size:]
     val_indices = indices[:val_size]
+    test_indices = indices[val_size:val_size+test_size]
 
     train_file_paths = tf.gather(file_paths, train_indices)
     train_labels = tf.gather(labels, train_indices)
@@ -165,9 +167,13 @@ def prepare_speech_commands_dataset(
     val_file_paths = tf.gather(file_paths, val_indices)
     val_labels = tf.gather(labels, val_indices)
 
+    test_file_paths = tf.gather(file_paths, test_indices)
+    test_labels = tf.gather(labels, test_indices)
+
     # Create TensorFlow datasets
     train_ds = tf.data.Dataset.from_tensor_slices((train_file_paths, train_labels))
     val_ds = tf.data.Dataset.from_tensor_slices((val_file_paths, val_labels))
+    test_ds = tf.data.Dataset.from_tensor_slices((test_file_paths, test_labels))
 
     # Apply preprocessing
     train_ds = train_ds.map(
@@ -178,10 +184,16 @@ def prepare_speech_commands_dataset(
         lambda x, y: preprocess_audio(x, y), num_parallel_calls=tf.data.AUTOTUNE
     )
 
+    test_ds = test_ds.map(
+        lambda x, y: preprocess_audio(x, y), num_parallel_calls=tf.data.AUTOTUNE
+    )
+
     # Add channel dimension
     train_ds = train_ds.map(lambda x, y: (tf.expand_dims(x, -1), y))
 
     val_ds = val_ds.map(lambda x, y: (tf.expand_dims(x, -1), y))
+
+    test_ds = test_ds.map(lambda x, y: (tf.expand_dims(x, -1), y))
 
     # Apply padded batching
     train_ds = train_ds.padded_batch(
@@ -199,4 +211,13 @@ def prepare_speech_commands_dataset(
         padding_values=(0.0, 0),
     ).prefetch(tf.data.AUTOTUNE)
 
-    return train_ds, val_ds, class_names
+    test_ds = test_ds.padded_batch(
+        batch_size=batch_size,
+        padded_shapes=(
+            [None, NUM_MFCCS, 1],
+            [],
+        ),
+        padding_values=(0.0, 0),
+    ).prefetch(tf.data.AUTOTUNE)
+
+    return train_ds, val_ds, test_ds, class_names

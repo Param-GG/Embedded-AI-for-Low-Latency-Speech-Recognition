@@ -1,10 +1,12 @@
+import numpy as np
 import tensorflow as tf
 from tensorflow.keras import layers, models
 import matplotlib.pyplot as plt
+from sklearn.metrics import classification_report
 import preprocess_data
 
 # 1. Load and preprocess dataset
-train_ds, val_ds, class_names = preprocess_data.prepare_speech_commands_dataset(
+train_ds, val_ds, test_ds, class_names = preprocess_data.prepare_speech_commands_dataset(
     "./datasets/speech_commands_v0.02"
 )
 
@@ -79,8 +81,21 @@ def print_acc_and_loss(history):
 
 print_acc_and_loss(history=history)
 
+# 5. Evaluate on test set
+def evaluate_model(model, test_ds):
+    y_true = []
+    y_pred = []
 
-# 5. Quantize and export
+    for feats, labels in test_ds:
+        y_true.extend(labels)
+        y_pred_prob = model.predict(feats)
+        y_pred.extend(np.argmax(y_pred_prob, axis=1))
+
+    print(classification_report(y_true, y_pred, target_names=class_names))
+
+evaluate_model(model, test_ds)
+
+# 6. Quantize and export
 def quantize_and_export(model, output_path="model.tflite"):
     import numpy as np
 
@@ -117,3 +132,5 @@ def quantize_and_export(model, output_path="model.tflite"):
 
 
 quantize_and_export(model, "edge_device_deployment\keyword_spotting\model.h")
+
+# 7. 
