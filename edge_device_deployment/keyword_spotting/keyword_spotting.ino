@@ -1,12 +1,12 @@
 #include "Arduino.h"
 #include <TensorFlowLite.h>
-#include "tensorflow/lite/experimental/micro/kernels/all_ops_resolver.h"
-#include "tensorflow/lite/experimental/micro/kernels/micro_ops.h"
-#include "tensorflow/lite/experimental/micro/micro_mutable_op_resolver.h"
-#include "tensorflow/lite/experimental/micro/micro_error_reporter.h"
-#include "tensorflow/lite/experimental/micro/micro_interpreter.h"
-#include "tensorflow/lite/schema/schema_generated.h"
-#include "tensorflow/lite/version.h"
+#include "edge-impulse-sdk/tensorflow/lite/micro/all_ops_resolver.h"
+#include "edge-impulse-sdk/tensorflow/lite/micro/kernels/micro_ops.h"
+#include "edge-impulse-sdk/tensorflow/lite/micro/micro_mutable_op_resolver.h"
+#include "edge-impulse-sdk/tensorflow/lite/micro/micro_error_reporter.h"
+#include "edge-impulse-sdk/tensorflow/lite/micro/micro_interpreter.h"
+#include "edge-impulse-sdk/tensorflow/lite/schema/schema_generated.h"
+// #include "edge-impulse-sdk/tensorflow/lite/version.h"
 #include <PDM.h> // For capturing audio using the onboard microphone
 #include "compute_mfcc.h"
 #include "model.h" // Include the quantized model
@@ -83,23 +83,16 @@ void setup()
       ;
   }
 
-  static tflite::MicroMutableOpResolver resolver;
+  static tflite::MicroMutableOpResolver<6> resolver;
   // static tflite::ops::micro::AllOpsResolver resolver;
 
-  // // Register the operators used in your model
-  // resolver.AddBuiltin(tflite::BuiltinOperator_CONV_2D,
-  //                     tflite::ops::micro::Register_CONV_2D());
-  // resolver.AddBuiltin(tflite::BuiltinOperator_DEPTHWISE_CONV_2D,
-  //                     tflite::ops::micro::Register_DEPTHWISE_CONV_2D());
-  // resolver.AddBuiltin(tflite::BuiltinOperator_RELU,
-  //                     tflite::ops::micro::Register_RELU());
-  // resolver.AddBuiltin(tflite::BuiltinOperator_ADD,
-  //                     tflite::ops::micro::Register_ADD());
-  // resolver.AddBuiltin(tflite::BuiltinOperator_AVERAGE_POOL_2D,
-  //                     tflite::ops::micro::Register_AVERAGE_POOL_2D());
-  // resolver.AddBuiltin(tflite::BuiltinOperator_FULLY_CONNECTED,
-  //                     tflite::ops::micro::Register_FULLY_CONNECTED());
-
+  // Register the operators used in your model
+  resolver.AddConv2D();
+  resolver.AddDepthwiseConv2D();
+  resolver.AddRelu();
+  resolver.AddAdd();
+  resolver.AddAveragePool2D();
+  resolver.AddFullyConnected();
 
   static tflite::MicroInterpreter staticInterpreter(
       model, resolver, tensorArena, tensorArenaSize, errorReporter);
