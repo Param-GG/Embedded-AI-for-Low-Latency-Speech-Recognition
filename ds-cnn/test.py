@@ -39,7 +39,7 @@ def evaluate_model(model, test_ds, class_names):
 
 def main():
     # Load the saved model
-    model = tf.keras.models.load_model("ds_cnn_model.h5")
+    model = tf.keras.models.load_model("arduino_model_ds_cnn.h")
     
     # Load test dataset
     data_dir = 'datasets/speech_commands_v0_extracted'
