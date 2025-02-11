@@ -1,5 +1,5 @@
 {
     "python.analysis.extraPaths": [
-        "./data_preprocessing"
+        "${workspaceFolder}/data_preprocessing"
     ]
 }

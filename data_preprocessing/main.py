@@ -1,5 +1,5 @@
 import sys
-from dataset import prepare_speech_commands_dataset
+from dataset_handling import prepare_speech_commands_dataset
 
 import os
 import logging

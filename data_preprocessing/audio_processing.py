@@ -1,7 +1,7 @@
 import random
 import tensorflow as tf
 from pathlib import Path
-from utils import load_config
+from data_preprocessing.utils import load_config
 
 # Load configuration parameters
 config = load_config()
