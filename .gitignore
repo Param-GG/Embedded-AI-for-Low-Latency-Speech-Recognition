@@ -1,5 +1,4 @@
 .venv
 datasets
-.vscode
 terminal_usage.ipynb
 edge_device_deployment/keyword_spotting

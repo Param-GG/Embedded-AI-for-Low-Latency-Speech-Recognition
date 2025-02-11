@@ -1,0 +1,7 @@
+sample_rate: 8000
+frame_size: 0.032
+frame_stride: 0.02
+nfft: 256
+num_mel_bins: 40
+num_mfccs: 12
+background_noise_dir: "./datasets/speech_commands_v0.02/_background_noise_"
