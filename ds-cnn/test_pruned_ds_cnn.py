@@ -24,19 +24,27 @@ def main():
     input_details = interpreter.get_input_details()
     output_details = interpreter.get_output_details()
     
+    # Retrieve quantization parameters for input and output
+    input_scale, input_zero_point = input_details[0]['quantization']
+    output_scale, output_zero_point = output_details[0]['quantization']
+    
     y_true, y_pred = [], []
     
     # Evaluate using the test dataset
     for features, labels in test_ds:
-        # The quantized model expects int8 input
-        input_batch = features.numpy().astype(np.int8)
-        batch_size = input_batch.shape[0]
-        for i in range(batch_size):
+        # Convert float32 features to int8 using quantization parameters
+        features_np = features.numpy()
+        input_batch = np.round(features_np / input_scale + input_zero_point).astype(np.int8)
+        
+        batch_size_actual = input_batch.shape[0]
+        for i in range(batch_size_actual):
             sample = np.expand_dims(input_batch[i], axis=0)
             interpreter.set_tensor(input_details[0]['index'], sample)
             interpreter.invoke()
-            output = interpreter.get_tensor(output_details[0]['index'])
-            pred = np.argmax(output)
+            # Get the output and dequantize it
+            output_int8 = interpreter.get_tensor(output_details[0]['index'])
+            output_float = (output_int8.astype(np.float32) - output_zero_point) * output_scale
+            pred = np.argmax(output_float)
             y_pred.append(pred)
         y_true.extend(labels.numpy())
     

@@ -1,31 +1,66 @@
 import tensorflow as tf
+from tensorflow import keras
 from tensorflow.keras import layers, models
+import tensorflow_model_optimization as tfmot
 import time
 from tqdm import tqdm
 import sys
 import os
+import numpy as np
+
+# Add tf.keras mixed precision
+from tensorflow.keras import mixed_precision
+
+
+
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
 from data_preprocessing.dataset_handling import prepare_speech_commands_dataset
 
 
-# Set GPU memory growth
-physical_devices = tf.config.list_physical_devices('GPU')
-if physical_devices:
-    tf.config.experimental.set_memory_growth(physical_devices[0], True)
+def configure_gpu():
+    physical_devices = tf.config.list_physical_devices('GPU')
+    if physical_devices:
+        try:
+            for gpu in physical_devices:
+                tf.config.experimental.set_memory_growth(gpu, True)
+                # Set memory limit for RTX 4050 (6GB - 1.5GB safety margin)
+                tf.config.set_logical_device_configuration(
+                    gpu,
+                    [tf.config.LogicalDeviceConfiguration(memory_limit=4608)]
+                )
+            # Enable mixed precision
+            policy = mixed_precision.Policy('mixed_float16')
+            mixed_precision.set_global_policy(policy)
+            print("Mixed precision policy:", policy)
+        except RuntimeError as e:
+            print(f"GPU configuration error: {e}")
+
+# Call configure_gpu before any other TF operations
+configure_gpu()
+
+# # Set GPU memory growth
+# physical_devices = tf.config.list_physical_devices('GPU')
+# if physical_devices:
+#     tf.config.experimental.set_memory_growth(physical_devices[0], True)
 
 def build_ds_cnn(input_shape, num_classes):
-    model = models.Sequential([
+    model = keras.Sequential([
         layers.InputLayer(shape=input_shape),
-        layers.Conv2D(64, (3, 3), activation="relu", strides=(1, 1)),
+        layers.Conv2D(32, (3, 3), activation="relu", strides=(1, 1)),
+        layers.BatchNormalization(),
         layers.DepthwiseConv2D((3, 3), activation="relu"),
-        layers.Conv2D(64, (1, 1), activation="relu"),
+        layers.BatchNormalization(),
+        layers.Conv2D(32, (1, 1), activation="relu"),
+        layers.BatchNormalization(),
         layers.GlobalAveragePooling2D(),
         layers.Dense(num_classes, activation="softmax"),
     ])
     
-    optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)
+    # Use mixed precision optimizer
+    optimizer = keras.optimizers.Adam(learning_rate=0.001)
+    optimizer = mixed_precision.LossScaleOptimizer(optimizer)
+    
     model.compile(
         optimizer=optimizer,
         loss="sparse_categorical_crossentropy",
@@ -43,7 +78,7 @@ class ProgressBar(tf.keras.callbacks.Callback):
         print(f"\nEpoch {epoch+1}/{self.epochs}")
         self.train_progbar = tqdm(
             total=self.params['steps'],
-            desc=f"Training",
+            desc="Training",
             bar_format='{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [ETA {remaining}]'
         )
 
@@ -60,8 +95,7 @@ class ProgressBar(tf.keras.callbacks.Callback):
         print(f"Epoch {epoch+1} completed in {epoch_time:.2f} seconds")
         print(f" - Loss: {logs['loss']:.4f} - Accuracy: {logs['accuracy']:.4f}")
         print(f" - Val Loss: {logs['val_loss']:.4f} - Val Accuracy: {logs['val_accuracy']:.4f}")
-        
-        
+
 def quantize_and_export(model, val_ds, output_path="model.tflite"):
     """
     Quantize model to int8 and export for Arduino.
@@ -112,13 +146,13 @@ def main():
         print(f"Number of unique labels:", len(tf.unique(labels)[0]))
     print(f"Number of classes:", len(class_names))
 
-    # Build model
+    # Build original DS-CNN model
     input_shape = (99, 12, 1)  # MFCC shape
-    model = build_ds_cnn(input_shape, len(class_names))
+    base_model = build_ds_cnn(input_shape, len(class_names))
     
-    # Train model
+    # Train the original model
     epochs = 25
-    model.fit(
+    base_model.fit(
         train_ds,
         validation_data=val_ds,
         epochs=epochs,
@@ -126,12 +160,52 @@ def main():
         verbose=0
     )
     
-    # Save model
-    model.save("ds_cnn_model.h5")
+    # Export the original, unpruned, unquantized model
+    base_model.save("ds_cnn_model.h5")
+    print("Original model saved as ds_cnn_model.h5")
     
-    # Quantize and export for Arduino
-    quantize_and_export(model, val_ds, "arduino_model_ds_cnn.tflite")
-
+    # ----- Now, Prune and Quantize -----
+    # Set up pruning using TensorFlow Model Optimization Toolkit
+    prune_low_magnitude = tfmot.sparsity.keras.prune_low_magnitude
+    num_train_steps = np.ceil(sum(1 for _ in train_ds) * epochs).astype(np.int32)
+    
+    pruning_params = {
+        'pruning_schedule': tfmot.sparsity.keras.PolynomialDecay(
+            initial_sparsity=0.30,
+            final_sparsity=0.70,
+            begin_step=0,
+            end_step=num_train_steps
+        )
+    }
+    
+    # Wrap the original model with pruning
+    pruned_model = prune_low_magnitude(base_model, **pruning_params)
+    
+    # Recompile the pruned model
+    pruned_model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+        loss="sparse_categorical_crossentropy",
+        metrics=["accuracy"]
+    )
+    
+    # Further train the pruned model for a few epochs to fine-tune pruning
+    additional_epochs = 10
+    pruned_model.fit(
+        train_ds,
+        validation_data=val_ds,
+        epochs=additional_epochs,
+        callbacks=[ProgressBar(), tfmot.sparsity.keras.UpdatePruningStep()],
+        verbose=0
+    )
+    
+    # Strip pruning wrappers from the pruned model
+    final_pruned_model = tfmot.sparsity.keras.strip_pruning(pruned_model)
+    final_pruned_model.save("ds_cnn_model_pruned.h5")
+    print("Pruned model saved as ds_cnn_model_pruned.h5")
+    
+    # Quantize and export the pruned model
+    quantize_and_export(final_pruned_model, val_ds, "arduino_model_ds_cnn_pruned.tflite")
+    print("Pruned and quantized model exported as arduino_model_ds_cnn_pruned.tflite")
 
 if __name__ == "__main__":
     main()
