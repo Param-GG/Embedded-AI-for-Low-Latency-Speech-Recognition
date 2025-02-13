@@ -1,13 +1,13 @@
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras import layers, models
-import matplotlib.pyplot as plt
-from sklearn.metrics import classification_report
+# import matplotlib.pyplot as plt
+# from sklearn.metrics import classification_report
 import preprocess_data
 
 # 1. Load and preprocess dataset
 train_ds, val_ds, test_ds, class_names = (
-    preprocess_data.prepare_speech_commands_dataset("./datasets/speech_commands_v0.02")
+    preprocess_data.prepare_speech_commands_dataset("./datasets/speech_commands_v0_extracted")
 )
 
 
@@ -55,47 +55,47 @@ def train_model(model):
 history = train_model(model)
 
 
-# 4. Print accuracy and loss curves
-def print_acc_and_loss(history):
-    plt.figure(figsize=(12, 5))
+# # 4. Print accuracy and loss curves
+# def print_acc_and_loss(history):
+#     plt.figure(figsize=(12, 5))
 
-    plt.subplot(121)
-    plt.plot(history.history["loss"], label="Training Loss")
-    plt.plot(history.history["val_loss"], label="Validation Loss")
-    plt.xlabel("Epoch")
-    plt.ylabel("Loss")
-    plt.title("Training and Validation Loss")
-    plt.legend()
+#     plt.subplot(121)
+#     plt.plot(history.history["loss"], label="Training Loss")
+#     plt.plot(history.history["val_loss"], label="Validation Loss")
+#     plt.xlabel("Epoch")
+#     plt.ylabel("Loss")
+#     plt.title("Training and Validation Loss")
+#     plt.legend()
 
-    plt.subplot(122)
-    plt.plot(history.history["accuracy"], label="Training Accuracy")
-    plt.plot(history.history["val_accuracy"], label="Validation Accuracy")
-    plt.xlabel("Epoch")
-    plt.ylabel("Accuracy")
-    plt.title("Training and Validation Accuracy")
-    plt.legend()
+#     plt.subplot(122)
+#     plt.plot(history.history["accuracy"], label="Training Accuracy")
+#     plt.plot(history.history["val_accuracy"], label="Validation Accuracy")
+#     plt.xlabel("Epoch")
+#     plt.ylabel("Accuracy")
+#     plt.title("Training and Validation Accuracy")
+#     plt.legend()
 
-    plt.tight_layout()
-    plt.show()
-
-
-print_acc_and_loss(history=history)
+#     plt.tight_layout()
+#     plt.show()
 
 
-# 5. Evaluate on test set
-def evaluate_model(model, test_ds):
-    y_true = []
-    y_pred = []
-
-    for feats, labels in test_ds:
-        y_true.extend(labels)
-        y_pred_prob = model.predict(feats)
-        y_pred.extend(np.argmax(y_pred_prob, axis=1))
-
-    print(classification_report(y_true, y_pred, target_names=class_names))
+# print_acc_and_loss(history=history)
 
 
-evaluate_model(model, test_ds)
+# # 5. Evaluate on test set
+# def evaluate_model(model, test_ds):
+#     y_true = []
+#     y_pred = []
+
+#     for feats, labels in test_ds:
+#         y_true.extend(labels)
+#         y_pred_prob = model.predict(feats)
+#         y_pred.extend(np.argmax(y_pred_prob, axis=1))
+
+#     print(classification_report(y_true, y_pred, target_names=class_names))
+
+
+# evaluate_model(model, test_ds)
 
 
 # 6. Quantize and export

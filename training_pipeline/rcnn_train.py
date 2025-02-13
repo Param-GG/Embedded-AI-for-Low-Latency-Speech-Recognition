@@ -18,11 +18,10 @@ def prepare_datasets():
     # 1. Load and preprocess dataset
     train_ds, val_ds, test_ds, class_names = (
         preprocess_data.prepare_speech_commands_dataset(
-            "./datasets/speech_commands_v0.02"
+            "./datasets/speech_commands_v0_extracted"
         )
     )
 
-    return train_ds, val_ds, test_ds, class_names
     return train_ds, val_ds, test_ds, class_names
 
 
