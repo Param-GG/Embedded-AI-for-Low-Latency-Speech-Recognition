@@ -1,36 +1,46 @@
 import tensorflow as tf
-from tensorflow.keras import layers, models
+from tensorflow.keras import layers, models, optimizers
 import time
 from tqdm import tqdm
 import sys
 import os
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
 from data_preprocessing.dataset_handling import prepare_speech_commands_dataset
-
 
 # Set GPU memory growth
 physical_devices = tf.config.list_physical_devices('GPU')
 if physical_devices:
     tf.config.experimental.set_memory_growth(physical_devices[0], True)
 
-def build_ds_cnn(input_shape, num_classes):
-    model = models.Sequential([
-        layers.InputLayer(shape=input_shape),
-        layers.Conv2D(64, (3, 3), activation="relu", strides=(1, 1)),
-        layers.DepthwiseConv2D((3, 3), activation="relu"),
-        layers.Conv2D(64, (1, 1), activation="relu"),
-        layers.GlobalAveragePooling2D(),
-        layers.Dense(num_classes, activation="softmax"),
-    ])
+def build_rcnn(input_shape, num_classes):
+    """
+    Build an R-CNN model that combines CNN layers for feature extraction
+    with a GRU layer for temporal modeling.
+    """
+    inputs = layers.Input(shape=input_shape)
     
-    optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)
-    model.compile(
-        optimizer=optimizer,
-        loss="sparse_categorical_crossentropy",
-        metrics=["accuracy"]
-    )
+    # Convolutional layers for spatial feature extraction
+    x = layers.Conv2D(32, (3, 3), activation='relu', padding='same')(inputs)
+    x = layers.MaxPooling2D(pool_size=(2, 2))(x)
+    x = layers.Conv2D(64, (3, 3), activation='relu', padding='same')(x)
+    x = layers.MaxPooling2D(pool_size=(2, 2))(x)
+    
+    # Reshape the feature maps for recurrent processing
+    shape = tf.keras.backend.int_shape(x)  # (batch, time, freq, channels)
+    x = layers.Reshape((shape[1], shape[2] * shape[3]))(x)
+    
+    # Recurrent layer to capture temporal dependencies
+    x = layers.GRU(64, return_sequences=False)(x)
+    
+    # Output layer for classification
+    outputs = layers.Dense(num_classes, activation='softmax')(x)
+    
+    model = models.Model(inputs=inputs, outputs=outputs)
+    optimizer = optimizers.Adam(learning_rate=0.001)
+    model.compile(optimizer=optimizer,
+                  loss="sparse_categorical_crossentropy",
+                  metrics=["accuracy"])
     return model
 
 class ProgressBar(tf.keras.callbacks.Callback):
@@ -43,7 +53,7 @@ class ProgressBar(tf.keras.callbacks.Callback):
         print(f"\nEpoch {epoch+1}/{self.epochs}")
         self.train_progbar = tqdm(
             total=self.params['steps'],
-            desc=f"Training",
+            desc="Training",
             bar_format='{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [ETA {remaining}]'
         )
 
@@ -60,19 +70,16 @@ class ProgressBar(tf.keras.callbacks.Callback):
         print(f"Epoch {epoch+1} completed in {epoch_time:.2f} seconds")
         print(f" - Loss: {logs['loss']:.4f} - Accuracy: {logs['accuracy']:.4f}")
         print(f" - Val Loss: {logs['val_loss']:.4f} - Val Accuracy: {logs['val_accuracy']:.4f}")
-        
-        
+
 def quantize_and_export(model, val_ds, output_path="model.tflite"):
     """
-    Quantize model to int8 and export for Arduino.
+    Quantize the model to int8 and export for deployment on an Arduino.
     """
     def representative_dataset():
-        # Use validation dataset for calibration
         for features, _ in val_ds.take(100):
             sample = tf.dtypes.cast(features, tf.float32)
             yield [sample]
 
-    # Convert to TensorFlow Lite model with full integer quantization
     converter = tf.lite.TFLiteConverter.from_keras_model(model)
     converter.optimizations = [tf.lite.Optimize.DEFAULT]
     converter.representative_dataset = representative_dataset
@@ -82,11 +89,10 @@ def quantize_and_export(model, val_ds, output_path="model.tflite"):
 
     tflite_model = converter.convert()
 
-    # Save as .tflite file
     with open(output_path, 'wb') as f:
         f.write(tflite_model)
 
-    # Save as C header file for Arduino
+    # Export as C header file for Arduino
     c_output_path = output_path.replace('.tflite', '.h')
     with open(c_output_path, 'w') as f:
         f.write('#ifndef MODEL_H\n#define MODEL_H\n\n')
@@ -99,7 +105,7 @@ def quantize_and_export(model, val_ds, output_path="model.tflite"):
     print(f"Quantized model size: {len(tflite_model) / 1024:.2f} KB")
 
 def main():
-    # Prepare data
+    # Prepare the dataset
     data_dir = 'datasets/speech_commands_v0_extracted'
     batch_size = 16
     train_ds, val_ds, test_ds, class_names = prepare_speech_commands_dataset(data_dir, batch_size=batch_size)
@@ -110,13 +116,11 @@ def main():
         print(f"Feature shape: {features.shape}")
         print(f"Feature min/max:", tf.reduce_min(features).numpy(), tf.reduce_max(features).numpy())
         print(f"Number of unique labels:", len(tf.unique(labels)[0]))
-    print(f"Number of classes:", len(class_names))
+    print(f"Number of classes: {len(class_names)}")
 
-    # Build model
-    input_shape = (99, 12, 1)  # MFCC shape
-    model = build_ds_cnn(input_shape, len(class_names))
-    
-    # Train model
+    # Build and train the R-CNN model
+    input_shape = (99, 12, 1)  # MFCC input shape
+    model = build_rcnn(input_shape, len(class_names))
     epochs = 25
     model.fit(
         train_ds,
@@ -126,12 +130,11 @@ def main():
         verbose=0
     )
     
-    # Save model
-    model.save("ds_cnn_model.h5")
+    # Save the trained model
+    model.save("rcnn_model.h5")
     
-    # Quantize and export for Arduino
-    quantize_and_export(model, val_ds, "arduino_model_ds_cnn.tflite")
-
+    # Quantize and export the model for Arduino deployment
+    quantize_and_export(model, val_ds, "arduino_rcnn_model.tflite")
 
 if __name__ == "__main__":
     main()

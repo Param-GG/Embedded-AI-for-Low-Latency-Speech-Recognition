@@ -4,6 +4,13 @@ import numpy as np
 from pathlib import Path
 from data_preprocessing.audio_processing import preprocess_audio
 from data_preprocessing.utils import load_config
+import sys
+import os
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from data_preprocessing.audio_processing import preprocess_audio
+
 
 # Load configuration to get NUM_MFCCS for padded batching
 config = load_config()
