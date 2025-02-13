@@ -1,49 +1,74 @@
 import tensorflow as tf
-from tensorflow.keras import layers, models, optimizers
+from tensorflow import keras
+from tensorflow.keras import layers, models
 import tensorflow_model_optimization as tfmot
+from tensorflow.keras import mixed_precision
+import numpy as np
 import time
 from tqdm import tqdm
 import sys
 import os
-import numpy as np
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from data_preprocessing.dataset_handling import prepare_speech_commands_dataset
 
-# Set GPU memory growth
-physical_devices = tf.config.list_physical_devices('GPU')
-if physical_devices:
-    tf.config.experimental.set_memory_growth(physical_devices[0], True)
+def configure_gpu():
+    physical_devices = tf.config.list_physical_devices('GPU')
+    if physical_devices:
+        try:
+            for gpu in physical_devices:
+                tf.config.experimental.set_memory_growth(gpu, True)
+                tf.config.set_logical_device_configuration(
+                    gpu,
+                    [tf.config.LogicalDeviceConfiguration(memory_limit=4608)]
+                )
+            policy = mixed_precision.Policy('mixed_float16')
+            mixed_precision.set_global_policy(policy)
+            print("Mixed precision policy:", policy)
+        except RuntimeError as e:
+            print(f"GPU configuration error: {e}")
+
+configure_gpu()
 
 def build_rcnn(input_shape, num_classes):
-    """
-    Build an RCNN model that extracts spatial features with Conv layers and
-    captures temporal dependencies using a GRU.
-    """
-    inputs = layers.Input(shape=input_shape)
+    """Build RCNN model for keyword spotting."""
+    inputs = keras.Input(shape=input_shape)
     
-    # Convolutional feature extraction
-    x = layers.Conv2D(32, (3, 3), activation='relu', padding='same')(inputs)
-    x = layers.MaxPooling2D(pool_size=(2, 2))(x)
-    x = layers.Conv2D(64, (3, 3), activation='relu', padding='same')(x)
-    x = layers.MaxPooling2D(pool_size=(2, 2))(x)
+    # Initial Conv layer
+    x = layers.Conv2D(64, (3, 3), padding='same')(inputs)
+    x = layers.BatchNormalization()(x)
+    x = layers.Activation('relu')(x)
     
-    # Reshape for recurrent processing:
-    # Suppose the remaining height dimension is treated as "time" and width*channels as features.
-    shape = tf.keras.backend.int_shape(x)  # (batch, height, width, channels)
-    x = layers.Reshape((shape[1], shape[2] * shape[3]))(x)
+    # Recurrent Conv Blocks
+    for _ in range(2):
+        recurrent = layers.Conv2D(64, (3, 3), padding='same')(x)
+        recurrent = layers.BatchNormalization()(recurrent)
+        recurrent = layers.Activation('relu')(recurrent)
+        recurrent = layers.Conv2D(64, (3, 3), padding='same')(recurrent)
+        recurrent = layers.BatchNormalization()(recurrent)
+        x = layers.Add()([x, recurrent])
+        x = layers.Activation('relu')(x)
+        x = layers.MaxPooling2D((2, 2))(x)
     
-    # GRU to capture temporal dependencies
-    x = layers.GRU(64, return_sequences=False)(x)
+    # Final layers
+    x = layers.Conv2D(128, (3, 3), padding='same')(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.Activation('relu')(x)
+    x = layers.GlobalAveragePooling2D()(x)
+    x = layers.Dense(256, activation='relu')(x)
+    x = layers.Dropout(0.5)(x)
+    outputs = layers.Dense(num_classes, activation='softmax')(x)
     
-    # Final classification layer
-    outputs = layers.Dense(num_classes, activation="softmax")(x)
+    model = keras.Model(inputs, outputs)
     
-    model = models.Model(inputs, outputs)
-    optimizer = optimizers.Adam(learning_rate=0.001)
-    model.compile(optimizer=optimizer,
-                  loss="sparse_categorical_crossentropy",
-                  metrics=["accuracy"])
+    optimizer = keras.optimizers.Adam(learning_rate=0.001)
+    optimizer = mixed_precision.LossScaleOptimizer(optimizer)
+    
+    model.compile(
+        optimizer=optimizer,
+        loss='sparse_categorical_crossentropy',
+        metrics=['accuracy']
+    )
     return model
 
 class ProgressBar(tf.keras.callbacks.Callback):
@@ -74,12 +99,8 @@ class ProgressBar(tf.keras.callbacks.Callback):
         print(f" - Loss: {logs['loss']:.4f} - Accuracy: {logs['accuracy']:.4f}")
         print(f" - Val Loss: {logs['val_loss']:.4f} - Val Accuracy: {logs['val_accuracy']:.4f}")
 
-def quantize_and_export(model, val_ds, output_path="model.tflite"):
-    """
-    Quantize model to int8 and export for Arduino.
-    """
+def quantize_and_export(model, val_ds, output_path="rcnn_model.tflite"):
     def representative_dataset():
-        # Use validation dataset for calibration
         for features, _ in val_ds.take(100):
             sample = tf.dtypes.cast(features, tf.float32)
             yield [sample]
@@ -93,43 +114,37 @@ def quantize_and_export(model, val_ds, output_path="model.tflite"):
 
     tflite_model = converter.convert()
 
-    # Save as .tflite file
     with open(output_path, 'wb') as f:
         f.write(tflite_model)
 
-    # Save as C header file for Arduino
     c_output_path = output_path.replace('.tflite', '.h')
     with open(c_output_path, 'w') as f:
-        f.write('#ifndef MODEL_H\n#define MODEL_H\n\n')
-        f.write('const unsigned char model_data[] = {\n')
+        f.write('#ifndef RCNN_MODEL_H\n#define RCNN_MODEL_H\n\n')
+        f.write('const unsigned char rcnn_model_data[] = {\n')
         f.write(','.join(f'0x{b:02x}' for b in tflite_model))
         f.write('\n};\n')
-        f.write(f'const unsigned int model_len = {len(tflite_model)};\n')
-        f.write('\n#endif // MODEL_H')
+        f.write(f'const unsigned int rcnn_model_len = {len(tflite_model)};\n')
+        f.write('\n#endif // RCNN_MODEL_H')
 
-    print(f"Quantized model size: {len(tflite_model) / 1024:.2f} KB")
+    print(f"Quantized RCNN model size: {len(tflite_model) / 1024:.2f} KB")
 
 def main():
-    # Prepare data
     data_dir = 'datasets/speech_commands_v0_extracted'
-    batch_size = 16
+    batch_size = 32
     train_ds, val_ds, test_ds, class_names = prepare_speech_commands_dataset(data_dir, batch_size=batch_size)
     
-    # Print dataset info
     print("\nDataset Check:")
     for features, labels in train_ds.take(1):
         print(f"Feature shape: {features.shape}")
-        print(f"Feature min/max: {tf.reduce_min(features).numpy()}, {tf.reduce_max(features).numpy()}")
-        print(f"Number of unique labels: {len(tf.unique(labels)[0])}")
-    print(f"Number of classes: {len(class_names)}")
+        print(f"Feature min/max:", tf.reduce_min(features).numpy(), tf.reduce_max(features).numpy())
+        print(f"Number of unique labels:", len(tf.unique(labels)[0]))
+    print(f"Number of classes:", len(class_names))
 
-    # Build the original RCNN model
     input_shape = (99, 12, 1)  # MFCC shape
-    base_model = build_rcnn(input_shape, len(class_names))
+    model = build_rcnn(input_shape, len(class_names))
     
-    # Train the original RCNN model
-    epochs = 25
-    base_model.fit(
+    epochs = 30
+    model.fit(
         train_ds,
         validation_data=val_ds,
         epochs=epochs,
@@ -137,51 +152,12 @@ def main():
         verbose=0
     )
     
-    # Save the original, unpruned, unquantized RCNN model
-    base_model.save("rcnn_model.h5")
-    print("Original RCNN model saved as rcnn_model.h5")
+    model.save("rcnn_model.h5")
+    print("Original model saved as rcnn_model.h5")
     
-    # ----- Now, Prune and Quantize -----
-    prune_low_magnitude = tfmot.sparsity.keras.prune_low_magnitude
-    num_train_steps = np.ceil(sum(1 for _ in train_ds) * epochs).astype(np.int32)
-    
-    pruning_params = {
-        'pruning_schedule': tfmot.sparsity.keras.PolynomialDecay(
-            initial_sparsity=0.30,
-            final_sparsity=0.70,
-            begin_step=0,
-            end_step=num_train_steps
-        )
-    }
-    
-    # Wrap the original RCNN model with pruning
-    pruned_model = prune_low_magnitude(base_model, **pruning_params)
-    
-    # Recompile the pruned model
-    pruned_model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
-        loss="sparse_categorical_crossentropy",
-        metrics=["accuracy"]
-    )
-    
-    # Further train the pruned model for additional epochs to fine-tune pruning
-    additional_epochs = 10
-    pruned_model.fit(
-        train_ds,
-        validation_data=val_ds,
-        epochs=additional_epochs,
-        callbacks=[ProgressBar(), tfmot.sparsity.keras.UpdatePruningStep()],
-        verbose=0
-    )
-    
-    # Strip pruning wrappers from the pruned model
-    final_pruned_model = tfmot.sparsity.keras.strip_pruning(pruned_model)
-    final_pruned_model.save("rcnn_model_pruned.h5")
-    print("Pruned RCNN model saved as rcnn_model_pruned.h5")
-    
-    # Quantize and export the pruned model for Arduino
-    quantize_and_export(final_pruned_model, val_ds, "arduino_model_rcnn_pruned.tflite")
-    print("Pruned and quantized RCNN model exported as arduino_model_rcnn_pruned.tflite")
+    # Quantize and export
+    quantize_and_export(model, val_ds, "arduino_model_rcnn.tflite")
+    print("Quantized model exported as arduino_model_rcnn.tflite")
 
 if __name__ == "__main__":
     main()
